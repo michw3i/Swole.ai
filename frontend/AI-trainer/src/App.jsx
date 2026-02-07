@@ -1,32 +1,70 @@
-import { useState } from 'react';
-import './App.css';
-import ImageUpload from './components/ImageUpload';
-import ChatBox from './components/ChatBox';
+import { useState, useEffect } from 'react'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import './App.css'
+import supabase from './supabaseClient'
+import ImageUpload from './components/ImageUpload'
+import ChatBox from './components/ChatBox'
+import SignIn from './pages/SignIn'
 
-function App() {
-  const [uploadedImage, setUploadedImage] = useState(null);
-  const [messages, setMessages] = useState([]);
+function Main() {
+  const [uploadedImage, setUploadedImage] = useState(null)
+  const [messages, setMessages] = useState([])
+  const navigate = useNavigate()
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    navigate('/signin')
+  }
 
   return (
     <div className="app-container">
       <header>
+        <img src="/swole_ai_logo_embedded.svg" alt="Swole.ai" className="app-logo" />
         <h1>Swole.ai</h1>
+        <button className="btn-signout" onClick={handleSignOut}>Sign out</button>
       </header>
-      
+
       <div className="main-content">
-        <ImageUpload 
+        <ImageUpload
           uploadedImage={uploadedImage}
           setUploadedImage={setUploadedImage}
         />
-        
-        <ChatBox 
+        <ChatBox
           messages={messages}
           setMessages={setMessages}
           uploadedImage={uploadedImage}
         />
       </div>
     </div>
-  );
+  )
 }
 
-export default App;
+export default function App() {
+  const [session, setSession] = useState(undefined)
+
+  useEffect(() => {
+    if (!supabase) {
+      setSession(null)
+      return
+    }
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  if (session === undefined) return null
+
+  return (
+    <Routes>
+      <Route path="/signin" element={session ? <Navigate to="/" /> : <SignIn />} />
+      <Route path="/*" element={session ? <Main /> : <Navigate to="/signin" />} />
+    </Routes>
+  )
+}

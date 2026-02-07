@@ -28,7 +28,7 @@ function ChatBox({ messages, setMessages, uploadedImage }) {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -38,11 +38,11 @@ function ChatBox({ messages, setMessages, uploadedImage }) {
       });
 
       if (!response.ok) {
-        throw new Error('Chat request failed');
+        throw new Error(`Server error: ${response.status}`);
       }
 
       const data = await response.json();
-      
+
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: data.content
@@ -65,12 +65,12 @@ function ChatBox({ messages, setMessages, uploadedImage }) {
     }
   };
 
-    return (
+  return (
     <div className="chatbox-container">
       <div className="messages-container">
         {messages.length === 0 && (
           <div className="welcome-message">
-            👋 Hi! I'm your AI fitness trainer. Ask me anything about workouts, nutrition, or fitness goals!
+            Hi! I'm your AI fitness trainer. Ask me anything about workouts, nutrition, or fitness goals.
           </div>
         )}
         {messages.map((msg, index) => (
@@ -98,7 +98,7 @@ function ChatBox({ messages, setMessages, uploadedImage }) {
           placeholder="Ask about workouts, nutrition, or fitness goals..."
           rows="3"
         />
-        <button 
+        <button
           onClick={sendMessage}
           disabled={loading || !input.trim()}
         >

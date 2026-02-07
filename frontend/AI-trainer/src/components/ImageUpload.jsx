@@ -1,76 +1,72 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
+import './ImageUpload.css';
 
-const ImageUpload = ({uploadedImage, setUploadedImage}) => {
-    const [imageFile, setImageFile] = useState(null);
-    const [previewUrl, setPreviewUrl] = useState(null);
-    const fileInputRef = useRef(null);
+const ImageUpload = ({ uploadedImage, setUploadedImage }) => {
+  const [imageFile, setImageFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
 
-    const handleFileChange = (event) => {
-        const file = event.target.files?.[0];
-        if (file && file.type.substring(0, 5) === "image") {
-            setImageFile(file);
-            setPreviewUrl(URL.createObjectURL(file));
-            setUploadedImage(file);
-        } else {
-            setImageFile(null);
-            setPreviewUrl(null);
-            setUploadedImage(null);
-        }
-    };
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+    if (file && file.type.startsWith('image')) {
+      setImageFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+      setUploadedImage(file);
+    }
+  };
 
-    const handleUpload = async () => {
-        if (!imageFile) return;
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.type.startsWith('image')) {
+      setImageFile(file);
+      setPreviewUrl(URL.createObjectURL(file));
+      setUploadedImage(file);
+    }
+  };
 
-        const formData = new FormData();
-        formData.append("image", imageFile);
+  const handleRemove = () => {
+    setImageFile(null);
+    setPreviewUrl(null);
+    setUploadedImage(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
-        try {
-            const response = await fetch("http://localhost:8000/api/upload-image", {
-                method: "POST",
-                body: formData,
-            });
+  return (
+    <div className="image-upload-container">
+      <h2 className="upload-title">Photo</h2>
 
-            if (response.ok) {
-                const data = await response.json();  // ← GET THE RESPONSE
-                console.log("✅ Upload successful:", data);
-                alert(`✅ Image uploaded!\nFilename: ${data.filename}`);  // ← SHOW USER
-            } else {
-                console.error("Upload failed.");
-                alert("❌ Upload failed");  // ← SHOW ERROR
-            }
-        } catch (error) {
-            console.error("Error during upload:", error);
-            alert("❌ Error: " + error.message);  // ← SHOW ERROR
-        }
-    };
-
-     return (
-    <div>
       <input
         type="file"
         ref={fileInputRef}
         onChange={handleFileChange}
-        accept="image/*" // Restrict to image files
-        style={{ display: 'none' }} // Hide the default input
+        accept="image/*"
+        style={{ display: 'none' }}
       />
-      
-      {/* Custom button to trigger the hidden file input */}
-      <button onClick={() => fileInputRef.current.click()}>
-        Select Image
-      </button>
 
-      {/* Image Preview */}
-      {previewUrl && (
-        <div>
-          <h3>Preview:</h3>
-          <img src={previewUrl} alt="Preview" style={{ maxWidth: '200px', maxHeight: '200px' }} />
+      {!previewUrl ? (
+        <div
+          className={`drop-zone ${dragOver ? 'drag-over' : ''}`}
+          onClick={() => fileInputRef.current.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+        >
+          <div className="drop-zone-icon">+</div>
+          <p className="drop-zone-text">Click or drag an image here</p>
+          <span className="drop-zone-hint">JPG, PNG, WEBP up to 10MB</span>
+        </div>
+      ) : (
+        <div className="preview-wrapper">
+          <img src={previewUrl} alt="Preview" className="preview-image" />
+          <div className="preview-actions">
+            <button onClick={handleRemove} className="btn-remove">Remove</button>
+            <button onClick={() => fileInputRef.current.click()} className="btn-change">Change Photo</button>
+          </div>
         </div>
       )}
-
-      {/* Upload button */}
-      <button onClick={handleUpload} disabled={!imageFile}>
-        Upload Image
-      </button>
     </div>
   );
 };
