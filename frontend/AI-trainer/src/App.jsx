@@ -1,4 +1,3 @@
-// src/App.jsx
 import { useState } from 'react';
 import './App.css';
 import ImageUpload from './components/ImageUpload';
@@ -11,7 +10,7 @@ function App() {
   return (
     <div className="app-container">
       <header>
-        <h1>Swole.ai</h1>
+        <h1>AI Fitness Trainer</h1>
       </header>
       
       <div className="main-content">
