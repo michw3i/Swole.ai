@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Environment variables
 .env
 .env.local
@@ -18,3 +19,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+=======
+CLAUDE.md
+>>>>>>> 8bbafb7584483be63275209826e8e774aec0618b
