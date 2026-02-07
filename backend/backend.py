@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
@@ -7,15 +7,32 @@ import httpx
 import uuid
 import json
 import os 
-import requests
 from enum import Enum
+import shutil
+from pathlib import Path
 
 # Load environment variables FIRST
 from dotenv import load_dotenv
 load_dotenv()
 
 from openai import OpenAI
-openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+
+# ============ LLM CONFIGURATION ============
+# Switch between providers: 'openai' or 'daedalus'
+LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'daedalus')
+
+if LLM_PROVIDER == 'daedalus':
+    openai_client = OpenAI(
+        api_key=os.getenv('DAEDALUS_API_KEY'),
+        base_url=os.getenv('DAEDALUS_BASE_URL', 'https://api.daedalus-lab.com/v1')
+    )
+    CHAT_MODEL = os.getenv('DAEDALUS_MODEL', 'daedalus-chat')
+else:
+    openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+    CHAT_MODEL = "gpt-4o-mini"
+
+print(f"🤖 Using LLM Provider: {LLM_PROVIDER}, Model: {CHAT_MODEL}")
+# ==========================================
 
 from supabase import create_client, Client
 supabase_url = os.getenv('SUPABASE_URL')
@@ -23,11 +40,10 @@ supabase_key = os.getenv('SUPABASE_KEY')
 supabase: Client = create_client(supabase_url, supabase_key)
 
 
-
 # ------------------------ FastAPI ----------------------------
 app = FastAPI(
     title="Swole.ai",
-    description="Supabase + OpenAI + Wger integration",
+    description="Supabase + Daedalus Lab + Wger integration",
     version="3.0"
 )
 
@@ -52,7 +68,7 @@ class FitnessLevel(str, Enum):
 
 class WorkoutType(str, Enum):
     CARDIO = "cardio"
-    UPPER_BODY= "upper_body"
+    UPPER_BODY = "upper_body"
     LOWER_BODY = "lower_body"
     FULL_BODY = "full_body"
     ARMS = "arms"
@@ -71,7 +87,7 @@ class UserProfile(BaseModel):
     height_cm: float = Field(gt=0)
     fitness_level: FitnessLevel
     goals: List[str]
-    medical_conditions: Optional[List[str]]=[]
+    medical_conditions: Optional[List[str]] = []
 
 class WorkoutRequest(BaseModel):
     user_id: str
@@ -85,6 +101,11 @@ class WorkoutFeedback(BaseModel):
     difficulty_rating: int = Field(ge=1, le=10)
     enjoyed: bool
     notes: Optional[str] = None
+
+class ChatRequest(BaseModel):
+    messages: List[Dict[str, str]]
+    image: Optional[str] = None
+
 
 # ------------------ Wger API Integration -----------------
 WGER_BASE_URL = "https://wger.de/api/v2"
@@ -112,10 +133,11 @@ async def fetch_wger_exercises(workout_type: str, limit: int = 50) -> List[Dict]
             try:
                 response = await client.get(
                     f"{WGER_BASE_URL}/exercise/",
-                    params = {"language": 2, "category": category, "limit": limit}
+                    params={"language": 2, "category": category, "limit": limit}
                 )
-                data = response.json()
-                all_exercises.extend(data.get("results", []))
+                if response.status_code == 200:
+                    data = response.json()
+                    all_exercises.extend(data.get("results", []))
             except Exception as e:
                 print(f"Wger API error: {e}")
     return all_exercises
@@ -134,6 +156,7 @@ async def get_exercise_images(exercise_id: int) -> List[str]:
         except:
             return []
 
+
 async def get_exercise_videos(exercise_id: int) -> List[str]:
     """Get video URLs for an exercise"""
     async with httpx.AsyncClient(timeout=10.0) as client:
@@ -147,14 +170,15 @@ async def get_exercise_videos(exercise_id: int) -> List[str]:
         except:
             return []
 
-# -------------OpenAI Workout Generation---------------
+
+# ------------- AI Workout Generation ---------------
 async def generate_ai_workout(
     user_profile: Dict,
     workout_type: str,
     duration_minutes: int,
     available_exercises: List[Dict]
 ) -> Dict:
-    """Use OpenAI to generate intelligent workout plan"""
+    """Use AI to generate intelligent workout plan"""
     
     # Prepare exercise options
     exercise_list = []
@@ -209,7 +233,7 @@ Return ONLY valid JSON with this structure:
 
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=CHAT_MODEL,
             messages=[
                 {"role": "system", "content": "You are an expert personal trainer who creates safe, effective workouts."},
                 {"role": "user", "content": prompt}
@@ -223,6 +247,8 @@ Return ONLY valid JSON with this structure:
         # Remove markdown if present
         if ai_response.startswith("```json"):
             ai_response = ai_response.replace("```json", "").replace("```", "").strip()
+        if ai_response.startswith("```"):
+            ai_response = ai_response.replace("```", "").strip()
         
         workout_plan = json.loads(ai_response)
         
@@ -242,12 +268,13 @@ Return ONLY valid JSON with this structure:
         return workout_plan
     
     except Exception as e:
-        print(f"OpenAI error: {e}")
+        print(f"AI error: {e}")
         # Fallback
         return fallback_workout(available_exercises, duration_minutes, user_profile)
 
+
 def fallback_workout(exercises: List[Dict], duration: int, profile: Dict) -> Dict:
-    """Simple fallback if OpenAI fails"""
+    """Simple fallback if AI fails"""
     import random
     
     num_exercises = 4 if duration <= 30 else 6
@@ -277,7 +304,8 @@ def fallback_workout(exercises: List[Dict], duration: int, profile: Dict) -> Dic
         "workout_notes": "Great workout ahead!"
     }
 
-# ---------------API Endpoints--------------------
+
+# --------------- API Endpoints --------------------
 
 @app.get("/")
 async def root():
@@ -285,10 +313,12 @@ async def root():
         "message": "AI Fitness Trainer API",
         "version": "3.0",
         "database": "Supabase",
-        "ai": "OpenAI",
+        "ai": LLM_PROVIDER,
+        "model": CHAT_MODEL,
         "exercises": "Wger API",
         "docs": "/docs"
     }
+
 
 @app.post("/api/users", status_code=201)
 async def create_user(profile: UserProfile):
@@ -298,7 +328,6 @@ async def create_user(profile: UserProfile):
     bmi = profile.weight_kg / ((profile.height_cm / 100) ** 2)
     
     try:
-        # Insert into Supabase
         result = supabase.table('users').insert({
             'user_id': user_id,
             'name': profile.name,
@@ -322,6 +351,7 @@ async def create_user(profile: UserProfile):
     except Exception as e:
         print(f"Supabase error: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
 
 @app.get("/api/users/{user_id}")
 async def get_user(user_id: str):
@@ -352,6 +382,7 @@ async def get_user(user_id: str):
         print(f"Supabase error: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+
 @app.get("/api/workout-types")
 async def get_workout_types():
     """Get available workout types"""
@@ -369,6 +400,7 @@ async def get_workout_types():
         {"value": "stretching", "label": "Stretching", "description": "Flexibility and mobility"}
     ]
     return {"workout_types": types}
+
 
 @app.post("/api/workouts/generate")
 async def generate_workout(request: WorkoutRequest):
@@ -399,7 +431,7 @@ async def generate_workout(request: WorkoutRequest):
         if not available_exercises:
             raise HTTPException(status_code=404, detail="No exercises found")
         
-        # Generate workout with OpenAI
+        # Generate workout with AI
         workout_plan = await generate_ai_workout(
             user_profile,
             request.workout_type.value,
@@ -436,6 +468,7 @@ async def generate_workout(request: WorkoutRequest):
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=f"Error generating workout: {str(e)}")
 
+
 @app.get("/api/workouts/{workout_id}")
 async def get_workout(workout_id: str):
     """Get workout details from Supabase"""
@@ -465,6 +498,7 @@ async def get_workout(workout_id: str):
         print(f"Supabase error: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
+
 @app.post("/api/workouts/{workout_id}/feedback")
 async def submit_feedback(workout_id: str, feedback: WorkoutFeedback):
     """Submit workout feedback to Supabase with AI recommendation"""
@@ -492,7 +526,7 @@ Notes: {feedback.notes or 'None'}
 Be encouraging and specific about adjustments if needed."""
 
             response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=CHAT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=150,
                 temperature=0.8
@@ -500,7 +534,8 @@ Be encouraging and specific about adjustments if needed."""
             
             recommendation = response.choices[0].message.content.strip()
         
-        except:
+        except Exception as e:
+            print(f"AI recommendation error: {e}")
             # Fallback
             if feedback.difficulty_rating >= 8:
                 recommendation = "That was intense! Next time we'll dial it back for better recovery."
@@ -517,6 +552,7 @@ Be encouraging and specific about adjustments if needed."""
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=f"Error submitting feedback: {str(e)}")
+
 
 @app.get("/api/users/{user_id}/workouts")
 async def get_user_workouts(user_id: str, limit: int = 10):
@@ -540,7 +576,54 @@ async def get_user_workouts(user_id: str, limit: int = 10):
         print(f"Supabase error: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-# -----------------------Health Check------------------------
+
+# ----------------------- Chat Endpoint ------------------------
+
+@app.post("/api/chat")
+async def chat(request: ChatRequest):
+    """Chat with AI fitness trainer"""
+    
+    try:
+        system_prompt = """You are an expert AI fitness trainer. You help users with:
+- Workout recommendations and form tips
+- Nutrition advice
+- Fitness goal setting
+- Exercise modifications for injuries
+- Motivation and encouragement
+
+Be friendly, encouraging, and provide specific, actionable advice."""
+
+        openai_messages = [
+            {"role": "system", "content": system_prompt}
+        ]
+        
+        # Add conversation history (last 10 messages to stay within token limits)
+        for msg in request.messages[-10:]:
+            openai_messages.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+        
+        response = openai_client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=openai_messages,
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        assistant_message = response.choices[0].message.content.strip()
+        
+        return {
+            "content": assistant_message,
+            "role": "assistant"
+        }
+    
+    except Exception as e:
+        print(f"Chat error: {e}")
+        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+# ----------------------- Health Check ------------------------
 
 @app.get("/api/health")
 async def health_check():
@@ -549,6 +632,8 @@ async def health_check():
     health = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
+        "llm_provider": LLM_PROVIDER,
+        "llm_model": CHAT_MODEL,
         "services": {}
     }
     
@@ -560,11 +645,19 @@ async def health_check():
         health["services"]["supabase"] = "❌ error"
         health["status"] = "unhealthy"
     
-    # Check OpenAI (just verify key is set)
-    if os.getenv('OPENAI_API_KEY'):
-        health["services"]["openai"] = "✅ configured"
+    # Check LLM API
+    if LLM_PROVIDER == 'daedalus':
+        api_key = os.getenv('DAEDALUS_API_KEY')
+        if api_key:
+            health["services"]["llm_api"] = "✅ Daedalus configured"
+        else:
+            health["services"]["llm_api"] = "⚠️ Daedalus API key not set"
     else:
-        health["services"]["openai"] = "⚠️ not configured"
+        api_key = os.getenv('OPENAI_API_KEY')
+        if api_key:
+            health["services"]["llm_api"] = "✅ OpenAI configured"
+        else:
+            health["services"]["llm_api"] = "⚠️ OpenAI API key not set"
     
     # Check Wger API
     try:
@@ -579,22 +672,61 @@ async def health_check():
     
     return health
 
-# ----------------------------Run Server------------------------
+
+# ------------------------- Image Upload --------------------------
+
+@app.post("/api/upload-image")
+async def upload_image(image: UploadFile = File(...)):
+    """Upload user image for workout analysis"""
+    
+    try:
+        # Validate file type
+        if not image.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        
+        # Create uploads directory if it doesn't exist
+        upload_dir = Path("uploads")
+        upload_dir.mkdir(exist_ok=True)
+        
+        # Generate unique filename
+        file_extension = image.filename.split(".")[-1]
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        file_path = upload_dir / unique_filename
+        
+        # Save the file
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+        
+        return {
+            "message": "Image uploaded successfully",
+            "filename": unique_filename,
+            "original_filename": image.filename,
+            "path": str(file_path),
+            "size_bytes": file_path.stat().st_size
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Upload error: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+# ---------------------------- Run Server ------------------------
 
 if __name__ == "__main__":
     import uvicorn
     
-    print("\n" + "="*70)
-    print("  🏋️  AI FITNESS TRAINER - Supabase Edition")
-    print("="*70)
+    print("\n" + "=" * 70)
+    print("  🏋️  AI FITNESS TRAINER - Swole.ai")
+    print("=" * 70)
     print(f"\n  💾 Database: Supabase (Cloud PostgreSQL)")
-    print(f"  🤖 AI: OpenAI GPT-4o-mini")
+    print(f"  🤖 AI Provider: {LLM_PROVIDER}")
+    print(f"  📦 Model: {CHAT_MODEL}")
     print(f"  💪 Exercises: Wger API")
     print(f"\n  Server: http://localhost:8000")
     print(f"  Docs: http://localhost:8000/docs")
     print(f"  Health: http://localhost:8000/api/health")
-    print("\n" + "="*70 + "\n")
+    print("\n" + "=" * 70 + "\n")
     
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
-

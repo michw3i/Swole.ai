@@ -28,8 +28,7 @@ function ChatBox({ messages, setMessages, uploadedImage }) {
     setLoading(true);
 
     try {
-      // TODO: Call your backend API here
-      const response = await fetch('/api/chat', {
+      const response = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -37,6 +36,10 @@ function ChatBox({ messages, setMessages, uploadedImage }) {
           image: uploadedImage
         })
       });
+
+      if (!response.ok) {
+        throw new Error('Chat request failed');
+      }
 
       const data = await response.json();
       
@@ -62,9 +65,14 @@ function ChatBox({ messages, setMessages, uploadedImage }) {
     }
   };
 
-  return (
+    return (
     <div className="chatbox-container">
       <div className="messages-container">
+        {messages.length === 0 && (
+          <div className="welcome-message">
+            👋 Hi! I'm your AI fitness trainer. Ask me anything about workouts, nutrition, or fitness goals!
+          </div>
+        )}
         {messages.map((msg, index) => (
           <div key={index} className={`message ${msg.role}`}>
             <div className="message-content">

@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 
-const ImageUploader = () => {
+const ImageUpload = ({uploadedImage, setUploadedImage}) => {
     const [imageFile, setImageFile] = useState(null);
     const [previewUrl, setPreviewUrl] = useState(null);
     const fileInputRef = useRef(null);
@@ -10,9 +10,11 @@ const ImageUploader = () => {
         if (file && file.type.substring(0, 5) === "image") {
             setImageFile(file);
             setPreviewUrl(URL.createObjectURL(file));
+            setUploadedImage(file);
         } else {
             setImageFile(null);
             setPreviewUrl(null);
+            setUploadedImage(null);
         }
     };
 
@@ -23,18 +25,22 @@ const ImageUploader = () => {
         formData.append("image", imageFile);
 
         try {
-            const reponse = await fetch("", {
+            const response = await fetch("http://localhost:8000/api/upload-image", {
                 method: "POST",
                 body: formData,
-        });
+            });
 
             if (response.ok) {
-                constole.log("Image uploaded successfully!");
+                const data = await response.json();  // ← GET THE RESPONSE
+                console.log("✅ Upload successful:", data);
+                alert(`✅ Image uploaded!\nFilename: ${data.filename}`);  // ← SHOW USER
             } else {
                 console.error("Upload failed.");
+                alert("❌ Upload failed");  // ← SHOW ERROR
             }
         } catch (error) {
             console.error("Error during upload:", error);
+            alert("❌ Error: " + error.message);  // ← SHOW ERROR
         }
     };
 

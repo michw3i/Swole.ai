@@ -4,7 +4,7 @@ function Layout({ children }) {
     <div className="layout">
       <nav className="navbar">
         <img src="/logo.png" alt="Logo" />
-        <h1>AI Fitness Trainer</h1>
+        <h1>Swole.ai</h1>
       </nav>
       
       <main className="main-content">
@@ -12,7 +12,7 @@ function Layout({ children }) {
       </main>
       
       <footer>
-        <p>© 2026 AI Fitness Trainer</p>
+        <p>© 2026 Swole.ai</p>
       </footer>
     </div>
   );
