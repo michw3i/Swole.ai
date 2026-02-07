@@ -1,4 +1,5 @@
-<<<<<<< HEAD
+# Completely replace .gitignore with clean version
+cat > backend/.gitignore << 'EOF'
 # Environment variables
 .env
 .env.local
@@ -19,6 +20,7 @@ env/
 # OS
 .DS_Store
 Thumbs.db
-=======
+
+# Other
 CLAUDE.md
->>>>>>> 8bbafb7584483be63275209826e8e774aec0618b
+EOF
