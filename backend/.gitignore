@@ -1,26 +1,9 @@
-# Completely replace .gitignore with clean version
-cat > backend/.gitignore << 'EOF'
-# Environment variables
 .env
 .env.local
-
-# Python
 __pycache__/
-*.py[cod]
 *.pyc
 .venv/
 venv/
-env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Other
 CLAUDE.md
-EOF
