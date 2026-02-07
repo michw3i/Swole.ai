@@ -10,7 +10,7 @@ function App() {
   return (
     <div className="app-container">
       <header>
-        <h1>AI Fitness Trainer</h1>
+        <h1>Swole.ai</h1>
       </header>
       
       <div className="main-content">
