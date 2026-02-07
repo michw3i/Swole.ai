@@ -7,27 +7,29 @@ import httpx
 import uuid
 import json
 import os
-import requests
 from enum import Enum
 
 # Load environment variables FIRST
 from dotenv import load_dotenv
 load_dotenv()
 
-from openai import OpenAI
-openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+# --------- DEDALUS LABS (replaces OpenAI) ---------
+from dedalus_labs import AsyncDedalus, DedalusRunner
 
+dedalus_client = AsyncDedalus()  # Reads DEDALUS_API_KEY from env automatically
+dedalus_runner = DedalusRunner(dedalus_client)
+
+# --------- SUPABASE ---------
 from supabase import create_client, Client
 supabase_url = os.getenv('SUPABASE_URL')
 supabase_key = os.getenv('SUPABASE_KEY')
 supabase: Client = create_client(supabase_url, supabase_key)
 
 
-
 # ------------------------ FastAPI ----------------------------
 app = FastAPI(
     title="Swole.ai",
-    description="Supabase + OpenAI + Wger integration",
+    description="Supabase + Dedalus Labs + Wger integration",
     version="3.0"
 )
 
@@ -52,7 +54,7 @@ class FitnessLevel(str, Enum):
 
 class WorkoutType(str, Enum):
     CARDIO = "cardio"
-    UPPER_BODY= "upper_body"
+    UPPER_BODY = "upper_body"
     LOWER_BODY = "lower_body"
     FULL_BODY = "full_body"
     ARMS = "arms"
@@ -120,7 +122,7 @@ async def fetch_wger_exercises(workout_type: str, limit: int = 50) -> List[Dict]
             try:
                 response = await client.get(
                     f"{WGER_BASE_URL}/exercise/",
-                    params = {"language": 2, "category": category, "limit": limit}
+                    params={"language": 2, "category": category, "limit": limit}
                 )
                 data = response.json()
                 all_exercises.extend(data.get("results", []))
@@ -155,14 +157,14 @@ async def get_exercise_videos(exercise_id: int) -> List[str]:
         except:
             return []
 
-# -------------OpenAI Workout Generation---------------
+# ------------- Dedalus Labs Workout Generation ---------------
 async def generate_ai_workout(
     user_profile: Dict,
     workout_type: str,
     duration_minutes: int,
     available_exercises: List[Dict]
 ) -> Dict:
-    """Use OpenAI to generate intelligent workout plan"""
+    """Use Dedalus Labs to generate intelligent workout plan"""
 
     # Prepare exercise options
     exercise_list = []
@@ -216,21 +218,20 @@ Return ONLY valid JSON with this structure:
 }}"""
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an expert personal trainer who creates safe, effective workouts."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=2000
+        print(f"🏋️ Generating workout with Dedalus Labs...")
+        
+        response = await dedalus_runner.run(
+            input=f"You are an expert personal trainer who creates safe, effective workouts.\n\n{prompt}",
+            model="openai/gpt-4o-mini",  # Can also use "anthropic/claude-sonnet-4-20250514"
         )
 
-        ai_response = response.choices[0].message.content.strip()
+        ai_response = response.final_output.strip()
 
         # Remove markdown if present
         if ai_response.startswith("```json"):
             ai_response = ai_response.replace("```json", "").replace("```", "").strip()
+        if ai_response.startswith("```"):
+            ai_response = ai_response.replace("```", "").strip()
 
         workout_plan = json.loads(ai_response)
 
@@ -247,15 +248,16 @@ Return ONLY valid JSON with this structure:
                 exercise["equipment"] = [e.get("name") for e in matching_ex.get("equipment", [])]
                 exercise["description"] = matching_ex.get("description", "")
 
+        print(f"✅ Workout generated successfully")
         return workout_plan
 
     except Exception as e:
-        print(f"OpenAI error: {e}")
+        print(f"❌ Dedalus Labs error: {e}")
         # Fallback
         return fallback_workout(available_exercises, duration_minutes, user_profile)
 
 def fallback_workout(exercises: List[Dict], duration: int, profile: Dict) -> Dict:
-    """Simple fallback if OpenAI fails"""
+    """Simple fallback if AI fails"""
     import random
 
     num_exercises = 4 if duration <= 30 else 6
@@ -289,32 +291,38 @@ def fallback_workout(exercises: List[Dict], duration: int, profile: Dict) -> Dic
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """Chat with the AI fitness trainer"""
+    """Chat with the AI fitness trainer using Dedalus Labs"""
     try:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are Swole.ai, an expert AI fitness trainer. "
-                    "You help users with workout plans, nutrition advice, exercise form, "
-                    "and fitness goals. Be encouraging, knowledgeable, and concise."
-                )
-            }
-        ]
-        for msg in request.messages:
-            messages.append({"role": msg.role, "content": msg.content})
-
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=1000
+        print(f"📨 Chat request received: {len(request.messages)} messages")
+        
+        # Build the conversation into a prompt
+        system_prompt = (
+            "You are Swole.ai, an expert AI fitness trainer. "
+            "You help users with workout plans, nutrition advice, exercise form, "
+            "and fitness goals. Be encouraging, knowledgeable, and concise."
         )
-
-        return {"content": response.choices[0].message.content.strip()}
+        
+        # Build conversation context
+        conversation = f"System Instructions: {system_prompt}\n\n"
+        for msg in request.messages:
+            role = "User" if msg.role == "user" else "Assistant"
+            conversation += f"{role}: {msg.content}\n\n"
+        
+        print(f"🤖 Calling Dedalus Labs API...")
+        
+        response = await dedalus_runner.run(
+            input=conversation,
+            model="openai/gpt-4o-mini",  # Can also use "anthropic/claude-sonnet-4-20250514"
+        )
+        
+        print(f"✅ Dedalus Labs response received")
+        return {"content": response.final_output.strip()}
 
     except Exception as e:
-        print(f"Chat error: {e}")
+        import traceback
+        print(f"❌ Chat error type: {type(e).__name__}")
+        print(f"❌ Chat error message: {str(e)}")
+        print(f"❌ Full traceback:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
 
 @app.get("/")
@@ -323,7 +331,7 @@ async def root():
         "message": "AI Fitness Trainer API",
         "version": "3.0",
         "database": "Supabase",
-        "ai": "OpenAI",
+        "ai": "Dedalus Labs",
         "exercises": "Wger API",
         "docs": "/docs"
     }
@@ -336,7 +344,6 @@ async def create_user(profile: UserProfile):
     bmi = profile.weight_kg / ((profile.height_cm / 100) ** 2)
 
     try:
-        # Insert into Supabase
         result = supabase.table('users').insert({
             'user_id': user_id,
             'name': profile.name,
@@ -413,7 +420,6 @@ async def generate_workout(request: WorkoutRequest):
     """Generate AI-powered workout and save to Supabase"""
 
     try:
-        # Get user profile from Supabase
         user_result = supabase.table('users').select('*').eq('user_id', request.user_id).execute()
 
         if not user_result.data or len(user_result.data) == 0:
@@ -431,13 +437,11 @@ async def generate_workout(request: WorkoutRequest):
             "medical_conditions": user.get('medical_conditions', [])
         }
 
-        # Fetch exercises from Wger
         available_exercises = await fetch_wger_exercises(request.workout_type.value)
 
         if not available_exercises:
             raise HTTPException(status_code=404, detail="No exercises found")
 
-        # Generate workout with OpenAI
         workout_plan = await generate_ai_workout(
             user_profile,
             request.workout_type.value,
@@ -445,7 +449,6 @@ async def generate_workout(request: WorkoutRequest):
             available_exercises
         )
 
-        # Save to Supabase
         workout_id = str(uuid.uuid4())
 
         supabase.table('workouts').insert({
@@ -508,7 +511,6 @@ async def submit_feedback(workout_id: str, feedback: WorkoutFeedback):
     """Submit workout feedback to Supabase with AI recommendation"""
 
     try:
-        # Update workout in Supabase
         supabase.table('workouts').update({
             'completed': feedback.completed,
             'feedback': {
@@ -518,7 +520,7 @@ async def submit_feedback(workout_id: str, feedback: WorkoutFeedback):
             }
         }).eq('workout_id', workout_id).execute()
 
-        # Generate AI recommendation
+        # Generate AI recommendation using Dedalus Labs
         try:
             prompt = f"""Based on this workout feedback, provide a brief (2-3 sentences) motivational recommendation:
 
@@ -529,14 +531,12 @@ Notes: {feedback.notes or 'None'}
 
 Be encouraging and specific about adjustments if needed."""
 
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-                temperature=0.8
+            response = await dedalus_runner.run(
+                input=prompt,
+                model="openai/gpt-4o-mini",
             )
 
-            recommendation = response.choices[0].message.content.strip()
+            recommendation = response.final_output.strip()
 
         except:
             # Fallback
@@ -598,11 +598,12 @@ async def health_check():
         health["services"]["supabase"] = "error"
         health["status"] = "unhealthy"
 
-    # Check OpenAI (just verify key is set)
-    if os.getenv('OPENAI_API_KEY'):
-        health["services"]["openai"] = "configured"
+    # Check Dedalus Labs (verify key is set)
+    if os.getenv('DEDALUS_API_KEY'):
+        health["services"]["dedalus_labs"] = "configured"
     else:
-        health["services"]["openai"] = "not configured"
+        health["services"]["dedalus_labs"] = "not configured"
+        health["status"] = "unhealthy"
 
     # Check Wger API
     try:
@@ -617,16 +618,28 @@ async def health_check():
 
     return health
 
+# -------------------------Debug Endpoint------------------------
+@app.get("/api/debug/env")
+async def debug_env():
+    """Check if environment variables are loaded"""
+    dedalus_key = os.getenv('DEDALUS_API_KEY')
+    return {
+        "dedalus_key_exists": bool(dedalus_key),
+        "dedalus_key_prefix": dedalus_key[:10] + "..." if dedalus_key else None,
+        "supabase_url_exists": bool(os.getenv('SUPABASE_URL')),
+        "supabase_key_exists": bool(os.getenv('SUPABASE_KEY'))
+    }
+
 # ----------------------------Run Server------------------------
 
 if __name__ == "__main__":
     import uvicorn
 
     print("\n" + "="*70)
-    print("  AI FITNESS TRAINER - Supabase Edition")
+    print("  AI FITNESS TRAINER - Dedalus Labs Edition")
     print("="*70)
     print(f"\n  Database: Supabase (Cloud PostgreSQL)")
-    print(f"  AI: OpenAI GPT-4o-mini")
+    print(f"  AI: Dedalus Labs (OpenAI/Anthropic/etc)")
     print(f"  Exercises: Wger API")
     print(f"\n  Server: http://localhost:8000")
     print(f"  Docs: http://localhost:8000/docs")
@@ -634,4 +647,3 @@ if __name__ == "__main__":
     print("\n" + "="*70 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
