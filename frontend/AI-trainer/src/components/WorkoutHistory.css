@@ -1,0 +1,79 @@
+/* src/components/WorkoutHistory.css */
+.workout-history {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 25px;
+}
+
+.workout-history h2 {
+  margin-bottom: 5px;
+}
+
+.workout-history .subtitle {
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+.workout-history.empty {
+  text-align: center;
+  padding: 50px;
+}
+
+.workout-history.empty p {
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-card {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 15px 20px;
+  background: var(--surface-light);
+  border-radius: 10px;
+  border-left: 4px solid var(--text-muted);
+  transition: all 0.2s;
+}
+
+.history-card.completed {
+  border-left-color: var(--secondary);
+}
+
+.history-card:hover {
+  transform: translateX(5px);
+}
+
+.history-date {
+  text-align: center;
+  padding: 10px;
+  background: var(--surface);
+  border-radius: 8px;
+  min-width: 70px;
+  font-size: 0.85rem;
+}
+
+.history-info {
+  flex: 1;
+}
+
+.history-info h4 {
+  text-transform: capitalize;
+  margin-bottom: 5px;
+}
+
+.history-meta {
+  display: flex;
+  gap: 15px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.history-status {
+  font-size: 1.5rem;
+}
