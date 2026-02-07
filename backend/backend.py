@@ -1,3 +1,4 @@
+# main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -13,11 +14,10 @@ from enum import Enum
 from dotenv import load_dotenv
 load_dotenv()
 
-# --------- DEDALUS LABS (replaces OpenAI) ---------
-from dedalus_labs import AsyncDedalus, DedalusRunner
+# --------- DEDALUS LABS ---------
+from dedalus_labs import AsyncDedalus
 
-dedalus_client = AsyncDedalus()  # Reads DEDALUS_API_KEY from env automatically
-dedalus_runner = DedalusRunner(dedalus_client)
+dedalus_client = AsyncDedalus()  # Reads DEDALUS_API_KEY from env
 
 # --------- SUPABASE ---------
 from supabase import create_client, Client
@@ -166,7 +166,6 @@ async def generate_ai_workout(
 ) -> Dict:
     """Use Dedalus Labs to generate intelligent workout plan"""
 
-    # Prepare exercise options
     exercise_list = []
     for ex in available_exercises[:30]:
         exercise_list.append({
@@ -178,8 +177,7 @@ async def generate_ai_workout(
             "equipment": [e.get("name") for e in ex.get("equipment", [])]
         })
 
-    # AI prompt
-    prompt = f"""You are an expert fitness trainer. Create a personalized {duration_minutes}-minute workout.
+    prompt = f"""Create a personalized {duration_minutes}-minute workout.
 
 USER PROFILE:
 - Name: {user_profile['name']}
@@ -220,12 +218,16 @@ Return ONLY valid JSON with this structure:
     try:
         print(f"🏋️ Generating workout with Dedalus Labs...")
         
-        response = await dedalus_runner.run(
-            input=f"You are an expert personal trainer who creates safe, effective workouts.\n\n{prompt}",
-            model="openai/gpt-4o-mini",  # Can also use "anthropic/claude-sonnet-4-20250514"
+        response = await dedalus_client.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert personal trainer who creates safe, effective workouts. Return only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=2000
         )
 
-        ai_response = response.final_output.strip()
+        ai_response = response.choices[0].message.content.strip()
 
         # Remove markdown if present
         if ai_response.startswith("```json"):
@@ -241,7 +243,6 @@ Return ONLY valid JSON with this structure:
             exercise["images"] = await get_exercise_images(exercise_id)
             exercise["videos"] = await get_exercise_videos(exercise_id)
 
-            # Get full data
             matching_ex = next((ex for ex in available_exercises if ex.get("id") == exercise_id), None)
             if matching_ex:
                 exercise["muscles"] = [m.get("name") for m in matching_ex.get("muscles", [])]
@@ -253,7 +254,6 @@ Return ONLY valid JSON with this structure:
 
     except Exception as e:
         print(f"❌ Dedalus Labs error: {e}")
-        # Fallback
         return fallback_workout(available_exercises, duration_minutes, user_profile)
 
 def fallback_workout(exercises: List[Dict], duration: int, profile: Dict) -> Dict:
@@ -295,34 +295,42 @@ async def chat(request: ChatRequest):
     try:
         print(f"📨 Chat request received: {len(request.messages)} messages")
         
-        # Build the conversation into a prompt
-        system_prompt = (
-            "You are Swole.ai, an expert AI fitness trainer. "
-            "You help users with workout plans, nutrition advice, exercise form, "
-            "and fitness goals. Be encouraging, knowledgeable, and concise."
-        )
+        # Build messages array (OpenAI-compatible format)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are Swole.ai, an expert AI fitness trainer. "
+                    "You help users with workout plans, nutrition advice, exercise form, "
+                    "and fitness goals. Be encouraging, knowledgeable, and concise."
+                )
+            }
+        ]
         
-        # Build conversation context
-        conversation = f"System Instructions: {system_prompt}\n\n"
+        # Add conversation history
         for msg in request.messages:
-            role = "User" if msg.role == "user" else "Assistant"
-            conversation += f"{role}: {msg.content}\n\n"
+            messages.append({
+                "role": msg.role,
+                "content": msg.content
+            })
         
         print(f"🤖 Calling Dedalus Labs API...")
         
-        response = await dedalus_runner.run(
-            input=conversation,
-            model="openai/gpt-4o-mini",  # Can also use "anthropic/claude-sonnet-4-20250514"
+        # Use standard chat completions API
+        response = await dedalus_client.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            messages=messages,
+            max_tokens=1024
         )
         
-        print(f"✅ Dedalus Labs response received")
-        return {"content": response.final_output.strip()}
+        content = response.choices[0].message.content
+        print(f"✅ Response received")
+        
+        return {"content": content}
 
     except Exception as e:
         import traceback
-        print(f"❌ Chat error type: {type(e).__name__}")
-        print(f"❌ Chat error message: {str(e)}")
-        print(f"❌ Full traceback:\n{traceback.format_exc()}")
+        print(f"❌ Chat error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
 
 @app.get("/")
@@ -520,26 +528,24 @@ async def submit_feedback(workout_id: str, feedback: WorkoutFeedback):
             }
         }).eq('workout_id', workout_id).execute()
 
-        # Generate AI recommendation using Dedalus Labs
+        # Generate AI recommendation
         try:
-            prompt = f"""Based on this workout feedback, provide a brief (2-3 sentences) motivational recommendation:
+            response = await dedalus_client.chat.completions.create(
+                model="openai/gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a fitness coach giving brief feedback."},
+                    {"role": "user", "content": f"""Based on this workout feedback, provide a brief (2-3 sentences) motivational recommendation:
 
 Completed: {feedback.completed}
 Difficulty (1-10): {feedback.difficulty_rating}
 Enjoyed: {feedback.enjoyed}
-Notes: {feedback.notes or 'None'}
-
-Be encouraging and specific about adjustments if needed."""
-
-            response = await dedalus_runner.run(
-                input=prompt,
-                model="openai/gpt-4o-mini",
+Notes: {feedback.notes or 'None'}"""}
+                ],
+                max_tokens=150
             )
-
-            recommendation = response.final_output.strip()
+            recommendation = response.choices[0].message.content
 
         except:
-            # Fallback
             if feedback.difficulty_rating >= 8:
                 recommendation = "That was intense! Next time we'll dial it back for better recovery."
             elif feedback.difficulty_rating <= 3:
@@ -578,8 +584,6 @@ async def get_user_workouts(user_id: str, limit: int = 10):
         print(f"Supabase error: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-# -----------------------Health Check------------------------
-
 @app.get("/api/health")
 async def health_check():
     """Check if all services are working"""
@@ -598,7 +602,7 @@ async def health_check():
         health["services"]["supabase"] = "error"
         health["status"] = "unhealthy"
 
-    # Check Dedalus Labs (verify key is set)
+    # Check Dedalus Labs
     if os.getenv('DEDALUS_API_KEY'):
         health["services"]["dedalus_labs"] = "configured"
     else:
@@ -618,7 +622,6 @@ async def health_check():
 
     return health
 
-# -------------------------Debug Endpoint------------------------
 @app.get("/api/debug/env")
 async def debug_env():
     """Check if environment variables are loaded"""
@@ -630,20 +633,12 @@ async def debug_env():
         "supabase_key_exists": bool(os.getenv('SUPABASE_KEY'))
     }
 
-# ----------------------------Run Server------------------------
-
 if __name__ == "__main__":
     import uvicorn
-
     print("\n" + "="*70)
     print("  AI FITNESS TRAINER - Dedalus Labs Edition")
     print("="*70)
-    print(f"\n  Database: Supabase (Cloud PostgreSQL)")
-    print(f"  AI: Dedalus Labs (OpenAI/Anthropic/etc)")
-    print(f"  Exercises: Wger API")
     print(f"\n  Server: http://localhost:8000")
     print(f"  Docs: http://localhost:8000/docs")
-    print(f"  Health: http://localhost:8000/api/health")
     print("\n" + "="*70 + "\n")
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
